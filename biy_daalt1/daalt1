@@ -1,1 +1,113 @@
 
+!pip install spylls
+!pip install pyspellchecker
+
+import re
+from collections import Counter
+import tensorflow as tf
+from spellchecker import SpellChecker
+
+# COMMON_WORDS жагсаалт
+COMMON_WORDS = {"юм", "нь", "ба", "болон", "байна", "гэх", "бол"}
+
+# Dummy classifier: Replace with your TensorFlow model and tokenizer
+def load_dummy_model():
+    model = tf.keras.Sequential([
+        tf.keras.layers.Embedding(input_dim=10000, output_dim=64),
+        tf.keras.layers.GlobalAveragePooling1D(),
+        tf.keras.layers.Dense(4, activation='softmax')  # Economic, Sports, Literature, Politics
+    ])
+    model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+    return model
+
+model = load_dummy_model()
+
+def classify_text(text):
+    """Text-ийг ангилах энгийн функц"""
+    if "спорт" in text.lower():
+        return 1, "Спорт"
+    elif "уран зохиол" in text.lower():
+        return 2, "Уран зохиол"
+    elif "эдийн засаг" in text.lower():
+        return 0, "Эдийн засаг"
+    elif "улс төр" in text.lower():
+        return 4, "Улс төр"
+    else:
+        return 3, "Бусад"
+
+def clean_text(text):
+    """Текстээс зөвхөн кирилл үсэг болон хоосон зайг үлдээх"""
+    return re.sub(r"[^\u0400-\u04FF\s]", "", text)
+
+# PySpellChecker ашиглах
+spell_checker = SpellChecker(language=None)
+
+# Файлын кодчилолыг тохируулж, зөв унших
+try:
+    spell_checker.word_frequency.load_text_file('/content/mn_MN.dic')
+except UnicodeDecodeError:
+    with open('/content/mn_MN.dic', 'r', encoding='utf-8', errors='replace') as f:
+        temp_file = "/content/temp_mn_MN.dic"
+        with open(temp_file, 'w', encoding='utf-8') as wf:
+            wf.write(f.read())
+    spell_checker.word_frequency.load_text_file(temp_file)
+
+def check_spelling(word):
+    """Check spelling using PySpellChecker"""
+    if word in spell_checker:
+        return True, []
+    else:
+        suggestions = spell_checker.candidates(word)
+        return False, suggestions
+
+def extract_root_words(text):
+    """Текстээс үгсийн язгуурыг гаргаж, зөв бичих дүрмийг шалгах"""
+    words = clean_text(text).split()
+    root_words = []
+    misspelled = {}
+
+    for word in words:
+        is_correct, suggestions = check_spelling(word)
+        root_words.append(word)
+        if not is_correct:
+            misspelled[word] = suggestions
+
+    return root_words, misspelled
+
+def process_text(text):
+    """Текст боловсруулах, анализ хийх"""
+    root_words, misspelled = extract_root_words(text)
+    word_counts = Counter(root_words)
+    filtered_words = {word: count for word, count in word_counts.items() if word not in COMMON_WORDS}
+    top_words = sorted(filtered_words.items(), key=lambda x: x[1], reverse=True)[:10]
+    classification_id, category = classify_text(text)
+
+    return {
+        "misspelled": misspelled,
+        "unique_words": len(set(root_words)),
+        "top_words": top_words,
+        "classification": category
+    }
+
+# Input text
+text = """
+Улаанбаатар, 2024 оны арван нэгдүгээр сарын 26 /МОНЦАМЭ/. УИХ- ын дарга Д Амарбаясгалан Бүгд Найрамдах Улсыг тунхаглаж, ард түмэн засаглах, эрх чөлөөтэй амьдрах үндсийг бүрдүүлсэн анхдугаар Үндсэн хууль батлагдсан 100 жилийн ойн баярын мэндийг дэвшүүллээ.
+Тэрбээр мэндчилгээндээ, “Одоогоос 100 жилийн өмнө монголын аймаг, хошууд, ардын цэргийн ангиудаас сонгогдсон 77 төлөөлөгч Улсын Анхдугаар Их Хурлаар чуулж, анхны Үндсэн хуулиа 1924 оны 11 дүгээр сарын 26-ны өдөр баталж Бүгд Найрамдах Улсыг тунхагласан түүх бол бидний бахархал мөн. Монголчууд Бүгд Найрамдах улсаа тунхаглаж анхдугаар Үндсэн хуулиа баталснаар зүүн, төв Азидаа Япон, Хятад улсын хамт Үндсэн хууль бүхий эхний гурван улс болсон түүхтэй. Ийнхүү Бүгд Найрамдах засаглалыг тогтоож, дэлхийн улс орнуудтай хөл нийлүүлж, үндсэн хуульт ёсыг нэвтрүүлж, тивдээ түүчээлсэн нь бидний хувьд үнэ цэнтэй.
+20 - р зууны эхэн үед өмнөд хөршид Манж Чин улсын уналт, хойд хөршид Октябрын хувьсгал, Европ тивд улс орнуудын зөрчилдөөн, Дэлхийн I дайн, зарим үндэстний тусгаар тогтнолын төлөөх тэмцэл өрнөж, дайн дажны хурцадмал нөхцөлтэй байлаа. Дэлхий дахин амар амгалангүй байсан энэ цаг үед Монголчууд эрх чөлөөнд хүрэх зорилгоо ахиулж, Бүгд Найрамдах засгаа тунхаглаж чадсан нь үнэхээр бахархалтай үйл явдал.
+1924 оны Үндсэн хуулийн улс төр, эрх зүйн ач холбогдол нь төрийн эрх мэдлийг ард түмэнд шилжүүлж, төрийг сонгуульт зарчмаар удирдах тогтолцоог бэхжүүлж, хүний эрх, эрх чөлөөний талаар зарим дэвшил гарган хуульчилж, Бүгд Найрамдах улсыг тунхаглан зарласанд оршино. 100 жилийн өмнө Монголчууд ард түмэн засаглах, төлөөллийн зарчмаар төрийг удирдах, байгалийн баялгийг ард түмний мэдэлд харьяалуулах, улсын бэлэг тэмдгийг тогтоох, хууль тогтоох байгууллага нь гүйцэтгэх засгаа томилох, хүний үндсэн эрх, эрх чөлөөг баталгаажуулах, нутгийн удирдлагын бүрэн эрхийг тодорхойлох зэрэг чухал асуудлыг тунхаглаж байсан нь залгамжлагдаж өнөөгийн ардчилсан Үндсэн хуульд бэхжин төгөлдөржсөөр байна. Энэ  хугацаанд 1940, 1960, 1992 онд Үндсэн хуулиа бүтэц, бичвэр, агуулгын хувьд улам баяжуулан сайжрууллаа. Үндсэн хуульт ёсны энэ хөгжлийн үе шатад төрт улсынхаа тусгаар тогтнол, бүрэн эрхт байдлыг дордуулаагүй нь Монголчуудын бас нэгэн бахархах зүйл мөн юм.
+Анхдугаар Үндсэн хуульд засгийн бүх эрх ард түмний мэдэлд байх, төрийн эрх мэдлийн уг сурвалж ард иргэд байх зарчмыг анх удаа тогтоосон нь дараагийн Үндсэн хуульд бэхжиж, улмаар 1992 оны ардчилсан Үндсэн хуулийн амин чухал зарчмын нэг болсон билээ. Тиймээс өнөөгийн парламентын засаглал нь геополитик, дотоод улс төрийн нөхцөл байдлын хувьд чухал тогтолцоо бөгөөд үүнийг цаашид улам төгөлдөржүүлэн авч явах ёстой.
+"""
+# Тест текстийн үр дүнг хэвлэх
+result = process_text(text)
+
+print("Misspelled Words with Suggestions:")
+for word, suggestions in result["misspelled"].items():
+    suggestions_list = suggestions if suggestions is not None else []
+    print(f" - {word}: {', '.join(suggestions_list)}")
+
+print("\nTotal Unique Words:", result["unique_words"])
+print("\nTop 10 Frequent Words (Excluding Common Words):")
+for word, count in result["top_words"]:
+    print(f" - {word}: {count}")
+
+print("\nText Category:", result["classification"])
